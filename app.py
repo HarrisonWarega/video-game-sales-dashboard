@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import joblib
 import matplotlib.pyplot as plt
 
@@ -31,6 +32,20 @@ def load_region_trends():
 @st.cache_resource
 def load_model():
     return joblib.load("models/ridge_model.pkl")
+
+@st.cache_resource
+def load_xgb_model():
+    return joblib.load("models/xgb_model.pkl")
+
+@st.cache_data
+def load_model_features():
+    df = pd.read_csv("data/processed/model_features.csv")
+
+    # Remove target column if present
+    feature_cols = [c for c in df.columns if c != "Global_Sales_M"]
+
+    return feature_cols
+
 
 df_raw = load_raw()
 st.subheader("Raw Dataset Preview")
@@ -166,4 +181,76 @@ with tab3:
     )
 
 with tab4:
-    st.info("Sales prediction model")
+    st.subheader("Global Sales Prediction (ML Model)")
+
+    st.markdown(
+        """
+        This tool uses a **Ridge Regression model** trained on historical video game data
+        to predict **Global Sales (in millions)** based on release year, platform,
+        genre, and publisher strength.
+        """
+    )
+
+    # Load model & feature schema
+    model = load_model()
+    feature_names = load_model_features()
+
+    # --- User Inputs ---
+    col1, col2 = st.columns(2)
+
+    with col1:
+        year = st.slider("Release Year", 1980, 2020, 2010)
+        publisher_strength = st.slider(
+            "Publisher Strength (0–1 scale)",
+            min_value=0.0,
+            max_value=1.0,
+            value=0.5
+        )
+
+    with col2:
+        platform = st.selectbox(
+            "Platform",
+            sorted(df_raw["Platform"].unique())
+        )
+
+        genre = st.selectbox(
+            "Genre",
+            sorted(df_raw["Genre"].unique())
+        )
+
+    # --- Build feature vector ---
+    input_data = pd.DataFrame(0, index=[0], columns=feature_names)
+
+    # Numeric features
+    if "Year" in input_data.columns:
+        input_data["Year"] = year
+
+    if "Publisher_Strength" in input_data.columns:
+        input_data["Publisher_Strength"] = publisher_strength
+
+    # One-hot features
+    platform_col = f"Platform_{platform}"
+    genre_col = f"Genre_{genre}"
+
+    if platform_col in input_data.columns:
+        input_data[platform_col] = 1
+
+    if genre_col in input_data.columns:
+        input_data[genre_col] = 1
+
+    # --- Prediction ---
+    if st.button("Predict Global Sales"):
+        log_prediction = model.predict(input_data)[0]
+
+        # Convert from log scale to real sales (millions)
+        prediction = max(0, np.expm1(log_prediction))
+
+        st.metric(
+            label="Predicted Global Sales",
+            value=f"{prediction:.2f} million units"
+        )
+
+        st.caption(
+            "Prediction is based on nonlinear historical sales patterns learned from the data. "
+            "Values represent expected sales, not guarantees."
+        )
